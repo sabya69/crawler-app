@@ -55,3 +55,60 @@ pre {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Sidebar styles */
+.sidebar {
+  position: fixed;
+  left: 16px;
+  top: 90px; /* below top navbar */
+  width: 220px;
+  background: linear-gradient(180deg, #0f1720 0%, #13171c 100%);
+  border: 1px solid #27323a;
+  padding: 12px;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  z-index: 50;
+}
+
+.sidebar ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.sidebar ul li {
+  margin-bottom: 10px;
+}
+
+.sidebar a {
+  display: block;
+  text-decoration: none;
+  color: #9adcf0;
+  padding: 10px;
+  border-radius: 8px;
+  transition: background 0.2s, color 0.2s;
+  font-weight: 600;
+}
+
+.sidebar a:hover {
+  background: rgba(0, 188, 212, 0.12);
+  color: #00d0e6;
+}
+
+.sidebar .download-btn {
+  background: linear-gradient(90deg, #00bcd4, #0197a8);
+  color: #06121a !important;
+  padding: 10px;
+  text-align: center;
+}
+
+/* Ensure container shifts right a bit so sidebar doesn't overlap */
+.container {
+  margin-left: 260px; /* leave space for sidebar */
+  max-width: 860px;
+}
+
+/* On small screens hide sidebar and remove left margin */
+@media (max-width: 900px) {
+  .sidebar { display: none; }
+  .container { margin-left: auto; margin-right: auto; width: 95%; }
+}

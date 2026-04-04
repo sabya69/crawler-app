@@ -1,10 +1,24 @@
-from flask import Flask, render_template, request, redirect, session, url_for
+from flask import Flask, render_template, request, redirect, session, url_for, send_file
 import mysql.connector
 from crawler import crawl, reset_state, get_crawl_report
+import os
+import sys
 
+# ✅ Fix for PyInstaller: point Flask to the correct template/static folders
+if getattr(sys, 'frozen', False):
+    # Running inside the .exe
+    base_dir = sys._MEIPASS
+else:
+    # Running normally (python app.py)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=os.path.join(base_dir, 'templates'),
+    static_folder=os.path.join(base_dir, 'static'),
+)
 app.secret_key = '031204'
+
 # ------------------ ADMIN LOGIN ------------------ #
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
@@ -12,7 +26,6 @@ def admin_login():
         username = request.form.get('username')
         password = request.form.get('password')
 
-        # Simple hardcoded check (replace with DB check if needed)
         if username == 'SABYASACHI' and password == '031204':
             session['admin_logged_in'] = True
             return redirect('/admin_dashboard')
@@ -38,7 +51,7 @@ def get_db_connection():
     return mysql.connector.connect(
         host="localhost",
         user="root",
-        password="031204",  # change if needed
+        password="031204",
         database="feedback_db"
     )
 
@@ -61,10 +74,10 @@ def index():
         }
 
     return render_template('index.html', results=results)
+
 @app.route('/crawl_thankyou')
 def crawl_thankyou():
     return render_template('crawl_thankyou.html')
-    return redirect('/crawl_thankyou')
 
 # ------------------ FEEDBACK ROUTES ------------------ #
 @app.route('/feedback')
@@ -99,6 +112,17 @@ def submit_feedback():
 
     return render_template('thankyou.html')
 
+@app.route('/download-report')
+def download_report():
+    filename = "report.pdf"
+    file_path = os.path.join(os.getcwd(), filename)
+
+    if not os.path.exists(file_path):
+        return "Report not found! Generate it first.", 404
+
+    return send_file(file_path, as_attachment=True)
+
+
 # ------------------ MAIN ENTRY ------------------ #
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False)   # ⚠️ debug=False is important for .exe builds
