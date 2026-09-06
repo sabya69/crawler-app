@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from pymongo import MongoClient
+from playwright.sync_api import sync_playwright
 
 # Ensure UTF-8 output encoding for Windows terminals
 if hasattr(sys.stdout, 'reconfigure'):
@@ -20,6 +21,7 @@ collection = db["crawl_results"]
 visited_urls = set()
 broken_links = []          # Stores (parent_url, broken_url)
 markup_issues = []         # Stores string issues
+page_sources = {}          # Stores url -> html_content mapping
 
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -47,6 +49,41 @@ def check_link_status(url, session=None):
         return res.status_code < 400
     except requests.RequestException:
         return False
+
+def fetch_html(url, session=None):
+    if session is None:
+        session = requests.Session()
+        session.headers.update(DEFAULT_HEADERS)
+    
+    try:
+        response = session.get(url, timeout=7, headers=DEFAULT_HEADERS)
+        html = response.text
+        if "aes.js" in html or "slowAES" in html or ("javascript" in html.lower() and len(html) < 1000):
+            html = fetch_html_playwright(url, session)
+        return html
+    except Exception:
+        return fetch_html_playwright(url, session)
+
+def fetch_html_playwright(url, session=None):
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent=DEFAULT_HEADERS["User-Agent"]
+            )
+            page = context.new_page()
+            page.goto(url, wait_until="networkidle", timeout=20000)
+            html = page.content()
+
+            if session is not None:
+                for c in context.cookies():
+                    session.cookies.set(c['name'], c['value'], domain=c.get('domain', ''), path=c.get('path', '/'))
+
+            browser.close()
+            return html
+    except Exception as e:
+        print(f"[PLAYWRIGHT ERROR] {url}: {e}")
+        return ""
 
 def check_markup_issues(soup, url):
     issues = []
@@ -90,13 +127,14 @@ def crawl(url, depth, level=0, session=None):
         return
 
     try:
-        response = session.get(url, timeout=7, headers=DEFAULT_HEADERS)
+        html = fetch_html(url, session)
         visited_urls.add(url)
+        page_sources[url] = html
 
         indent = "│   " * level + "├── "
         print(f"{indent}{url}")
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
 
         # Check markup issues
         markup_issues.extend(check_markup_issues(soup, url))
@@ -149,11 +187,51 @@ def crawl(url, depth, level=0, session=None):
 
 # ------------------ Report & Save ------------------
 
+def save_crawled_files(output_dir="crawled_output"):
+    """
+    Saves all crawled HTML page sources into a structured directory hierarchy matching the site URL path.
+    """
+    import os
+    import re
+
+    os.makedirs(output_dir, exist_ok=True)
+    saved_files = []
+
+    for page_url, content in page_sources.items():
+        parsed = urlparse(page_url)
+        domain = re.sub(r'[\\/*?:"<>|]', "_", parsed.netloc)
+        
+        url_path = parsed.path.strip('/')
+        if not url_path:
+            filename = "index.html"
+            sub_dirs = ""
+        else:
+            parts = url_path.split('/')
+            filename = parts[-1]
+            sub_dirs = os.path.join(*parts[:-1]) if len(parts) > 1 else ""
+            if not filename.endswith(('.html', '.php', '.htm', '.asp', '.aspx', '.jsp')):
+                filename += ".html"
+        
+        filename = re.sub(r'[\\/*?:"<>|]', "_", filename)
+        target_folder = os.path.join(output_dir, domain, sub_dirs)
+        os.makedirs(target_folder, exist_ok=True)
+
+        file_path = os.path.join(target_folder, filename)
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            saved_files.append((page_url, file_path))
+        except Exception as e:
+            print(f" ❌ Error saving {page_url}: {e}")
+
+    return saved_files
+
 def get_crawl_report():
     report = {
         "visited_urls": list(visited_urls),
         "broken_links": broken_links,
-        "markup_issues": markup_issues
+        "markup_issues": markup_issues,
+        "page_sources": page_sources
     }
 
     try:
@@ -165,10 +243,11 @@ def get_crawl_report():
     return report
 
 def reset_state():
-    global visited_urls, broken_links, markup_issues
+    global visited_urls, broken_links, markup_issues, page_sources
     visited_urls = set()
     broken_links = []
     markup_issues = []
+    page_sources = {}
 
 # ------------------ Entry Point ------------------
 
@@ -191,6 +270,11 @@ if __name__ == "__main__":
     print(f" - Pages Visited: {len(visited_urls)}")
     print(f" - Broken Links: {len(broken_links)}")
     print(f" - Markup Issues: {len(markup_issues)}")
+
+    print("\n📁 Saving Site Code & Directory Structure:")
+    saved = save_crawled_files(output_dir="crawled_output")
+    for page_url, file_path in saved:
+        print(f" - [{page_url}] -> Saved to: {file_path}")
 
     # Save report to MongoDB
     get_crawl_report()
