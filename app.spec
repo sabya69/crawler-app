@@ -9,8 +9,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('templates', 'templates'),   # ✅ includes all HTML templates
-        ('static', 'static'),         # ✅ includes CSS, JS, images etc.
+        ('templates', 'templates'),   
+        ('static', 'static'),         
     ],
     hiddenimports=[
         'flask',
