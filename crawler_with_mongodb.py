@@ -1,7 +1,15 @@
+import sys
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from pymongo import MongoClient
+
+# Ensure UTF-8 output encoding for Windows terminals
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 # ------------------ MongoDB Setup ------------------
 client = MongoClient("mongodb://localhost:27017/")
@@ -13,15 +21,29 @@ visited_urls = set()
 broken_links = []          # Stores (parent_url, broken_url)
 markup_issues = []         # Stores string issues
 
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 # ------------------ Utility Functions ------------------
+
+def normalize_url(url):
+    parsed = urlparse(url)
+    return parsed._replace(fragment="").geturl()
 
 def is_valid_url(url):
     parsed = urlparse(url)
     return bool(parsed.scheme) and bool(parsed.netloc)
 
-def check_link_status(url):
+def check_link_status(url, session=None):
+    if session is None:
+        session = requests.Session()
     try:
-        res = requests.head(url, allow_redirects=True, timeout=5)
+        res = session.head(url, allow_redirects=True, timeout=5, headers=DEFAULT_HEADERS)
+        if res.status_code in (405, 403, 400):
+            res = session.get(url, allow_redirects=True, timeout=5, headers=DEFAULT_HEADERS, stream=True)
         return res.status_code < 400
     except requests.RequestException:
         return False
@@ -57,12 +79,18 @@ def check_markup_issues(soup, url):
 
 # ------------------ Main Crawler Function ------------------
 
-def crawl(url, depth, level=0):
+def crawl(url, depth, level=0, session=None):
+    if session is None:
+        session = requests.Session()
+        session.headers.update(DEFAULT_HEADERS)
+
+    url = normalize_url(url)
+
     if depth == 0 or url in visited_urls:
         return
 
     try:
-        response = requests.get(url, timeout=5)
+        response = session.get(url, timeout=7, headers=DEFAULT_HEADERS)
         visited_urls.add(url)
 
         indent = "│   " * level + "├── "
@@ -77,30 +105,30 @@ def crawl(url, depth, level=0):
         for link_tag in soup.find_all("link", rel="stylesheet"):
             css_href = link_tag.get("href")
             if css_href:
-                css_url = urljoin(url, css_href)
+                css_url = normalize_url(urljoin(url, css_href))
                 if is_valid_url(css_url):
                     status = "[CSS]"
-                    if not check_link_status(css_url):
+                    if not check_link_status(css_url, session):
                         broken_links.append((url, css_url))
                         status = "[BROKEN CSS]"
                     print(f"{'│   ' * (level + 1)}├── {status} {css_url}")
 
         # JS files
         for script_tag in soup.find_all("script", src=True):
-            js_url = urljoin(url, script_tag['src'])
+            js_url = normalize_url(urljoin(url, script_tag['src']))
             if is_valid_url(js_url):
                 status = "[JS]"
-                if not check_link_status(js_url):
+                if not check_link_status(js_url, session):
                     broken_links.append((url, js_url))
                     status = "[BROKEN JS]"
                 print(f"{'│   ' * (level + 1)}├── {status} {js_url}")
 
         # Images
         for img_tag in soup.find_all("img", src=True):
-            img_url = urljoin(url, img_tag['src'])
+            img_url = normalize_url(urljoin(url, img_tag['src']))
             if is_valid_url(img_url):
                 status = "[IMG]"
-                if not check_link_status(img_url):
+                if not check_link_status(img_url, session):
                     broken_links.append((url, img_url))
                     status = "[BROKEN IMG]"
                 print(f"{'│   ' * (level + 1)}├── {status} {img_url}")
@@ -108,12 +136,12 @@ def crawl(url, depth, level=0):
         # Hyperlinks
         for a_tag in soup.find_all("a", href=True):
             href = a_tag['href']
-            link_url = urljoin(url, href)
+            link_url = normalize_url(urljoin(url, href))
             if is_valid_url(link_url):
-                if not check_link_status(link_url):
+                if not check_link_status(link_url, session):
                     broken_links.append((url, link_url))
                     print(f"{'│   ' * (level + 1)}├── [BROKEN LINK] {link_url}")
-                crawl(link_url, depth - 1, level + 1)
+                crawl(link_url, depth - 1, level + 1, session)
 
     except requests.RequestException as e:
         error_indent = "│   " * level + "├── "
